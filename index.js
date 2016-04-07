@@ -1,5 +1,3 @@
-'use strict';
-
 var request = require("request");
 var cheerio = require("cheerio");
 var fs = require("fs");
@@ -11,14 +9,15 @@ request({
     var $ = cheerio.load(body);
     var results = [];
 
-    $(".rcindex .rcIndexBrowse a").each(function(i) {
+    $(".rcindex .rcIndexBrowse a").each(function(j) {
 
         var span = $(this);
         var link = span.attr('href');
 
-        results.push({ uri: url + link, letter: span.text(), jobs: [] });
-        console.log(url + link);
-        console.log(results);
+        if(j < 1) 
+            results.push({ uri: url + link, letter: span.text(), jobs: [] });
+/*        console.log(url + link);
+        console.log(results);*/
 
         // fs.writeFile('./cheerio_results.json', JSON.stringify(results, null, '\t'));
         /*x('http://www....com', '.rcindex table tr', [{
@@ -33,20 +32,21 @@ request({
         request({ uri: page.uri }, function(error, response, body) {
             var $ = cheerio.load(body);
 
-            $(".rcindex table tr:nth-child(n + 2)").each(function() {
+            $(".rcindex table tr:nth-child(n + 2)").each(function(j) {
                 var tr = $(this);
 
                  console.info(tr.find('td a').text());
-
-                results[i].jobs.push({
-                    name: tr.find('td a').text().trim(),
-                    count: tr.find('td').last().text().trim(),
-                    next: url +tr.find('td a').attr('href')
-                });
+                if(j < 3) 
+                    results[i].jobs.push({
+                        name: tr.find('td a').text().trim(),
+                        count: tr.find('td').last().text().trim(),
+                        salary: {},
+                        next: url +tr.find('td a').attr('href')
+                    });
             });
     
-        console.info('resultados:');
-        console.info(results);            
+        console.warn('resultados:');
+        fs.writeFile('./cheerio_results.json', JSON.stringify(results, null, '\t'));        
             
         });
 
