@@ -14,8 +14,11 @@
   "author": "Carlos Andres Lopez",
   "license": "ISC",
   "dependencies": {
+    "async": "^2.0.0-rc.3",
     "cheerio": "^0.20.0",
     "fs": "0.0.2",
+    "optimist": "^0.6.1",
+    "q": "^1.4.1",
     "request": "^2.70.0"
   }
 }

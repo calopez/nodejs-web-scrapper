@@ -1,129 +1,172 @@
-var request = require("request");
-var cheerio = require("cheerio");
-var fs = require("fs");
-var url = 'http://www.payscale.com';
-var global_position;
-request({
-    uri: url + "/index/US/Job",
-}, function(error, response, body) {
-    var $ = cheerio.load(body);
-    var data = {};
+#!/usr/bin/env node
 
-    /* ----------------------------------------------------
-     *     ABC - links
-     * ---------------------------------------------------- */
+var Q = require('q'),
+    r = require("request"),
+    async = require("async"),
+    request = Q.denodeify(r),
+    htmlParser = require('./html_parser'),
+    fs = require("fs"),
+    argv = require('optimist').argv,
+    PARAM = readArgs(argv),
+    url = 'http://www.payscale.com';
 
-    $(".rcindex .rcIndexBrowse a").each(function(j) {
+Q.longStackSupport = true;
 
-        var span = $(this);
-        var link = span.attr('href');
-        var letter;
 
-        if (j < 2) {
-            letter = data[span.text()] = {};
-            letter.self = url + link;
-            letter.jobs = [];
-            console.info(data);
-            console.info(letter);
+
+/** _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ *
+ * Main process
+ *  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ */
+
+var listOfPages, // list of pages that have not been processed.
+    controlFile = 'remaining.json';
+
+if (!fs.existsSync('results')) fs.mkdirSync('results');
+
+console.time('total');
+
+request({uri: url + "/index/US/Job"}).spread(function(response, body) { // get pages to process
+    var startCollecting, content = "", len;
+
+    startCollecting = function(){
+        var data = htmlParser.getListOfPages(body);
+        fs.writeFileSync(controlFile, JSON.stringify(data, null, '\t'));
+        return data;
+    };
+
+    if(PARAM.restart) {
+
+        listOfPages = startCollecting();
+        content = JSON.stringify(listOfPages); // clone
+        fs.writeFileSync(controlFile, content);
+
+        return Q.fcall(function() {return JSON.parse(content); /*clone of json listOfPages*/});
+    }
+
+    if (fs.existsSync(controlFile)) content = fs.readFileSync(controlFile);
+
+    len = content.length;
+
+    if(len === 0) {
+        listOfPages = startCollecting(); // new process
+
+    } else if(len > 0 && len < 3) { // if content is like "{}" process already completed
+        console.log("It seems the process was already completed.");
+        console.log("See results in ./results folder.");
+        console.log("If you want to restart the process use --restart");
+        process.exit();
+
+    } else {
+
+        listOfPages = JSON.parse(content); // in progress
+    }
+
+
+    return Q.fcall(function() {return JSON.parse(content);});
+
+}).then(function(data) { // for each A|B|C|...|Z page create a request promise
+
+    var requestByLetterPromises = [];
+
+    // create a request promise for each letter page.
+    Object.keys(data).forEach(function(letter) {
+        requestByLetterPromises.push({
+            letter: letter,
+            request: request({uri: data[letter].self})
+        });
+    });
+
+    return Q.fcall(function() {return [data, requestByLetterPromises];});
+
+}).spread(function(data, requestByLetterPromises) { // process each A|B|C|...|Z page sync
+
+    async.eachSeries(requestByLetterPromises, function(promise, callback){
+        console.time(promise.letter);
+        processJobsByLetter(data[promise.letter], promise.request, callback);
+
+    }, function(err){
+
+        console.timeEnd('total');
+    });
+
+}).done();
+
+
+/**
+ * @description Write in a file the information of all jobs by a given letter
+ * @param {object} letter Container
+ * @param {Promise} req  Request to get html of the current page/letter
+ */
+function processJobsByLetter(letter, req, completejobsByLetter) {
+
+    async.waterfall([
+        function(next) { // get list of jobs
+
+            req.spread(function(response, body) {
+                letter.jobs = htmlParser.getListOfJobs(body);
+                next(null, letter.jobs);
+            }).fail(function(err){next(err);});
+
+        },
+        function(jobs, next) {
+
+            var deferred = Q.defer(),
+                processed = 0,
+                jobsNumber =jobs.length;
+
+            // for each job in the list of the current letter. Max PARAM.concurrency request(s) at a time.
+            async.forEachOfLimit(jobs, PARAM.concurrency, function(job, index, complete){
+
+                request({uri: job.self}).spread(function(response, body) {
+
+                    htmlParser.getSalaryByJob(job, body);
+                    processed++;
+                    complete(null);
+
+                }).done();
+
+            }, function(err){
+                if(err) next(err);
+                console.log(letter.id + '> ' + processed );
+                processed = 0;
+                next(null, jobs);
+            });
         }
 
-        /*   
-                // fs.writeFile('./cheerio_results.json', JSON.stringify(results, null, '\t'));
-                /*x('http://www....com', '.rcindex table tr', [{
-                      job_name: 'td:first-child',
-                      count: 'td:last-child',
-                      details: x('td:first-child a @href', '.container h1')
-                  }]*/
+    ], function (err, jobsInfo) {
 
+        if (err) console.error(err.messasge);
+
+        fs.writeFileSync('./results/' + letter.id + '_results.json', JSON.stringify(jobsInfo, null, '\t'));
+
+        delete listOfPages[letter.id];
+
+        fs.writeFileSync('./remaining.json', JSON.stringify(listOfPages, null, '\t'));
+
+        console.timeEnd(letter.id);
+
+        completejobsByLetter(); // 'done'
     });
 
-    /* ----------------------------------------------------
-     *  Positions by letter.  Nested for now - TODO: use asyn.js
-     * ---------------------------------------------------- */
+}
 
-    Object.keys(data).forEach(function(letter) {
-        var page = data[letter];
+/** _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ *
+ *                 Utilities
+ *  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ */
+// isNaN would return true if a string or undefined is passed because of Javascript coercion
+function valueIsNaN(v) {
+    return v !== v;
+}
 
-        request({ uri: page.self }, function(error, response, body) {
-            var $ = cheerio.load(body);
+function readArgs(argv) {
+    var concurrency = !!argv.concurrency ? Number(argv.concurrency) : 100;
 
-            $(".rcindex table tr:nth-child(n + 2)").each(function(j) {
-                var tr = $(this);
-
-                if (j < 2)
-                    data[letter].jobs.push({
-                        name: tr.find('td a').text().trim(),
-                        count: tr.find('td').last().text().trim(),
-                        salary: {},
-                        self: url + tr.find('td a').attr('href')
-                    });
-            });
-
-            /* ----------------------------------------------------
-            *  Salary by Position -  Nested for now - TODO: use asyn.js
-            * ---------------------------------------------------- */
-            Object.keys(data).forEach(function(letter) {
-                var page = data[letter];
-                var jobs = page.jobs;
-                
-                jobs.forEach(function(position) {
-                 global_position = position;
-                request({ uri: position.self }, function(error, response, body) {
-                    
-                    var $ = cheerio.load(body);
-                    
-                    var getTable = function(id) {
-                        return $(id)
-                            .find('table')
-                            .first()
-                            .find('tr:nth-child(n+2)');
-                    },
-                    getValue = function(table, row, col) {
-                        return table.eq(row).find('td').eq(col).html();
-                    };
-                    
-                    var anualSalary = getTable('#m_summaryReport'),
-                    salary = getValue(anualSalary, 0, 0),
-                    bonus = getValue(anualSalary, 1, 0),
-                    totalPay =  getValue(anualSalary, 2, 0);
-                    
-                    var hourlyRate = getTable('#m_summaryReport_hourly'),
-                    rate = getValue(hourlyRate, 0, 0),
-                    overtime = getValue(hourlyRate, 1, 0);   
-                    
-                    position.salary.anual = {
-                        salary: salary,
-                            bonus: bonus
-                    };
-                    
-                    position.salary.hourly = {
-                            rate: rate,
-                            overtime: overtime
-                    };
-                                        
-                    console.info(salary);
-                    console.info(bonus);                                   
-                                                       
-                    
-                    
-                });
-
-
-                });
-
-
-
-            });
-
-
-            console.warn('resultados:');
-            fs.writeFile('./cheerio_results.json', JSON.stringify(data, null, '\t'));
-
-
-
-        });
-
-    });
-
-
-});
+    return {
+        restart: Boolean(argv.restart),
+        concurrency: valueIsNaN(concurrency) ? 100 : concurrency
+    };
+}
