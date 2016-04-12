@@ -2,8 +2,9 @@
 
 var cheerio = require("cheerio"),
     url = 'http://www.payscale.com',
-    lettersLimit = Infinity, // for dev
-    jobsByLetterLimit = Infinity; // for dev
+    moment = require('moment'),
+    lettersLimit = 3, //Infinity, // for dev
+    jobsByLetterLimit = 2;// Infinity; // for dev
 
 var exports = module.exports = {};
 
@@ -70,18 +71,25 @@ exports.getSalaryByJob = function (position, html) {
     var b = $('body').find('h1');
     var t = $('body').find('#summaryReport');
 
-    var getTable = function(id) {
+    var getTable = function(id, index) {
         return $(id)
             .find('table')
-            .first()
+            .eq(index)
             .find('tr:nth-child(n+2)');
     };
 
-    var anualSalaryTable = getTable('#m_summaryReport'),
-        hourlyRateTable = getTable('#m_summaryReport_hourly');
+    var anualSalaryTable = getTable('#m_summaryReport', 0),
+        hourlyRateTable = getTable('#m_summaryReport_hourly', 0),
+        footNoteText, footnote;
 
-    var footNoteText = anualSalaryTable.slice(-1).find('td').text(),
-        footnote = parseFootNote(footNoteText);
+    // When there is not #m_summaryReport (anual info), the bonus, total pay and footnote
+    // appear in the second table of #m_summaryReport_hourly container.
+    // ¯\_(ツ)_/¯
+    anualSalaryTable = anualSalaryTable.length > 0 ? anualSalaryTable : getTable('#m_summaryReport_hourly', 1);
+
+    footNoteText = anualSalaryTable.slice(-1).find('td').text();
+    console.info('footNoteText:'  + footNoteText);
+    footnote = parseFootNote(footNoteText);
 
     position.salary.footnote = footnote;
 
@@ -126,11 +134,26 @@ function parseFootNote(text) {
 
     var footNote = text.trim().split('|').reduce(function(footnote, current) {
         var tuple = current.split(':'),
-            field = util.toValidObjectPropertyName(tuple[0]),
-            value = tuple[1];
+            field = util.toValidObjectPropertyName(tuple[0]);
+        console.log(current);
+        console.log(tuple);
+        var value = tuple[1].trim();
 
-        //TODO: validate if valid number convert to Number, same for dates
-        footnote[field] = tuple[1].trim();
+        // if number
+        if (!valueIsNaN(Number(value))) {
+            footnote[field] = Number(value);
+            return footnote;
+        }
+
+        // if date
+        if (moment(value, 'D MMM YYYY').isValid()) {
+            footnote[field] = Number(moment(value, 'D MMM YYYY').format('X'));
+            return footnote;
+        }
+
+        // if text
+        footnote[field] = value;
+
         return footnote;
 
     }, {});
@@ -174,4 +197,14 @@ function parseTable(table) {
     });
 
     return salary;
+}
+
+/** _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ *
+ *                 Utilities
+ *  _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+ */
+// isNaN would return true if a string or undefined is passed because of Javascript coercion
+function valueIsNaN(v) {
+    return v !== v;
 }

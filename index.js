@@ -118,7 +118,7 @@ function processJobsByLetter(letter, req, completejobsByLetter) {
 
             // for each job in the list of the current letter. Max PARAM.concurrency request(s) at a time.
             async.forEachOfLimit(jobs, PARAM.concurrency, function(job, index, complete){
-
+                console.info('request('+index+') '+ job.self);
                 request({uri: job.self}).spread(function(response, body) {
 
                     htmlParser.getSalaryByJob(job, body);
