@@ -3,8 +3,8 @@
 var cheerio = require("cheerio"),
     url = 'http://www.payscale.com',
     moment = require('moment'),
-    lettersLimit = 3, //Infinity, // for dev
-    jobsByLetterLimit = 2;// Infinity; // for dev
+    lettersLimit = Infinity, // for dev
+    jobsByLetterLimit = Infinity; // for dev
 
 var exports = module.exports = {};
 
@@ -88,7 +88,6 @@ exports.getSalaryByJob = function (position, html) {
     anualSalaryTable = anualSalaryTable.length > 0 ? anualSalaryTable : getTable('#m_summaryReport_hourly', 1);
 
     footNoteText = anualSalaryTable.slice(-1).find('td').text();
-    console.info('footNoteText:'  + footNoteText);
     footnote = parseFootNote(footNoteText);
 
     position.salary.footnote = footnote;
@@ -134,10 +133,8 @@ function parseFootNote(text) {
 
     var footNote = text.trim().split('|').reduce(function(footnote, current) {
         var tuple = current.split(':'),
-            field = util.toValidObjectPropertyName(tuple[0]);
-        console.log(current);
-        console.log(tuple);
-        var value = tuple[1].trim();
+            field = util.toValidObjectPropertyName(tuple[0]),
+            value = tuple[1].trim();
 
         // if number
         if (!valueIsNaN(Number(value))) {
