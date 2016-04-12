@@ -68,8 +68,6 @@ exports.getListOfJobs = function (html) {
 exports.getSalaryByJob = function (position, html) {
 
     var $ = cheerio.load(html);
-    var b = $('body').find('h1');
-    var t = $('body').find('#summaryReport');
 
     var getTable = function(id, index) {
         return $(id)
@@ -134,11 +132,12 @@ function parseFootNote(text) {
     var footNote = text.trim().split('|').reduce(function(footnote, current) {
         var tuple = current.split(':'),
             field = util.toValidObjectPropertyName(tuple[0]),
-            value = tuple[1].trim();
+            value = String(tuple[1]).trim();
 
         // if number
-        if (!valueIsNaN(Number(value))) {
-            footnote[field] = Number(value);
+        var n = value.replace(',', '');
+        if (!valueIsNaN(Number(n))) {
+            footnote[field] = parseFloat(n);
             return footnote;
         }
 
